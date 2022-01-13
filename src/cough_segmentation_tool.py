@@ -1,20 +1,20 @@
 
 # Copyright Alice Ashby 2022
 # Special thanks to Julia Meister
-# Version 0.0.2
+# Version 0.0.3
 # MIT license
 
 # TODO
 # - add docstrings to class and class methods
 # - test on coughvid, coswara, compare audio datasets
 # - fine-tune parameters RMSE, end_frames
-# - use logger module for debugging?
 
 # import required libraries
 
 import librosa                                     # librosa music package
 import soundfile as sf                             # for audio exportation
 import numpy as np                                 # for handling large arrays
+import logging                                     # for debugging
 
 import librosa.display                             # librosa plot functions
 import matplotlib.pyplot as plt                    # plotting with Matlab functionality
@@ -31,13 +31,19 @@ class CoughSegmentationTool:
     HOP_LENGTH = 256
 
     def __init__(self, threshold=0.5, minimum_distance=20, backtrack=0.01, 
-                 end_frames=2, max_normalization=False):
+                 end_frames=2, max_normalization=False, debug=False):
         ''''''
         self.threshold = threshold
         self.minimum_distance = minimum_distance
         self.backtrack = backtrack
         self.end_frames = end_frames
         self.max_normalization = max_normalization
+        self.debug = debug
+
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s'
+        )
 
     def get_max_normed_sample(self, sample):
         ''''''
@@ -65,7 +71,7 @@ class CoughSegmentationTool:
         return duration
 
     def get_onset_frames_from_rmse(self, sample_processed, threshold, minimum_distance,
-                                   end_frames):
+                                   end_frames, sample_name):
         ''''''
 
         # compute root mean squared energy (RMSE)
@@ -102,14 +108,20 @@ class CoughSegmentationTool:
             if high_rmse_frames[i] - high_rmse_frames[j] <= minimum_distance:
                 cough_frame_index[i] = False
 
-        # do not allow onsets in the last 2 frames if there are >6 frames in total
+        # do not allow onsets in the last 2 frames if there are 5+ frames in total
         if len(high_rmse_frames) > 5:
             cough_frame_index[-end_frames:] = False
-        
-        # return array of onset frames with a minimum distance between them
-        return (high_rmse_frames, np.array(high_rmse_frames)[cough_frame_index])
 
-    def get_onset_times_backtracked(self, onset_frames, backtrack):
+        # array of onset frames with a minimum distance between them
+        onset_frames = np.array(high_rmse_frames)[cough_frame_index]
+
+        if self.debug:
+            logging.info(f'{sample_name}: onset frames are {high_rmse_frames}')
+            logging.info(f'{sample_name}: selected onset frames are {onset_frames}')
+        
+        return onset_frames
+
+    def get_onset_times_backtracked(self, onset_frames, backtrack, sample_name):
         ''''''
 
         # get the onset times from the onset frames
@@ -121,10 +133,15 @@ class CoughSegmentationTool:
             # calculate the backtracked times
             time_backtracked = time - backtrack
             onset_times_backtracked.append(time_backtracked)
-        
-        return (onset_times, onset_times_backtracked)
 
-    def process_and_export_cough(self, sample_processed, onset_time, offset_time, new_filename):
+        if self.debug:
+            logging.info(f'{sample_name}: onset times are {onset_times}')
+            logging.info(f'{sample_name}: backtracked onset times are {onset_times_backtracked}')
+        
+        return onset_times_backtracked
+
+    def process_and_export_cough(self, sample_processed, onset_time, offset_time, new_filename,
+                                 sample_name):
         ''''''
         
         # get onset and offset samples from times
@@ -137,7 +154,10 @@ class CoughSegmentationTool:
         # trim leading and trailing silence under 10dB
         new_sample_trim = librosa.effects.trim(new_sample, top_db=10, frame_length=self.FRAME_LENGTH, 
                                                 hop_length=self.HOP_LENGTH)[0]
-        # normalize the sample
+        new_sample_duration = self.get_sample_duration(new_sample_trim)
+        if self.debug: logging.info(f'{sample_name}: sample duration is {new_sample_duration}')
+
+        # normalize the sample with min max normalization
         new_sample_scaled = self.get_min_max_normed_sample(new_sample_trim)
         
         # export cough sample to audio file
@@ -211,49 +231,47 @@ class CoughSegmentationTool:
                 plt.title(f'{sample_name} (min max normalization)')
             
             except ValueError as err:
-                print(f'{sample_name} had an error: "{err}". Skipped.')
+                if self.debug: logging.error(f'{sample_name} had an error: "{err}". Skipped.', exc_info=True)
+                else: logging.error(f'{sample_name} had an error: "{err}". Skipped.')
                 continue
 
     def run_onset_offset_detection_diagnostics(self, sample_filenames, threshold=0.5, minimum_distance=20,
-                                     backtrack=0.01, end_frames=2, debug=False, max_normalization=False):
+                                               backtrack=0.01, end_frames=2, max_normalization=False):
         ''''''
 
         for filename in tqdm(sample_filenames, desc='Processing samples'):
-            
-            # remove file path and filetype
-            sample_name_split = filename.split('/')[-1].split('.')[0]
-            sample_name = 'Sample ' + sample_name_split.split('-')[0]
+            try:
+                # remove file path and filetype
+                sample_name_split = filename.split('/')[-1].split('.')[0]
+                sample_name = 'Sample ' + sample_name_split.split('-')[0]
+                
+                # load and process audio samples
+                # # [0] because sample is loaded as a tuple
+                sample = librosa.load(filename, self.SAMPLE_RATE, mono=True)[0]
+                
+                # select max or min max normalization
+                sample_processed = self.get_max_normed_sample(sample) if max_normalization \
+                    else self.get_min_max_normed_sample(sample)
+                
+                # calculate cough onsets and offsets
+                onset_frames = self.get_onset_frames_from_rmse(sample_processed, threshold, 
+                                                               minimum_distance, end_frames,
+                                                               sample_name)
+                onset_times = self.get_onset_times_backtracked(onset_frames, backtrack, sample_name)
+                
+                # plot the backtracked onset times
+                plt.figure(figsize=(15, 5))
+                librosa.display.waveplot(sample_processed, sr=self.SAMPLE_RATE, alpha=0.4)
+                plt.vlines(onset_times, ymin=-1, ymax=1, color='r', alpha=0.8)
+                plt.title(sample_name)
+                title = f'{sample_name} (max normalization)' if max_normalization \
+                    else f'{sample_name} (min max normalization)'
+                plt.title(title)
 
-            # load and process audio samples
-            # [0] because sample is loaded as a tuple
-            sample = librosa.load(filename, self.SAMPLE_RATE, mono=True)[0]
-
-            # select max or min max normalization
-            sample_processed = self.get_max_normed_sample(sample) if max_normalization \
-                else self.get_min_max_normed_sample(sample)
-
-            # calculate cough onsets and offsets
-            high_rmse_frames = self.get_onset_frames_from_rmse(sample_processed, threshold, 
-                                                               minimum_distance, end_frames)[0]
-            onset_frames = self.get_onset_frames_from_rmse(sample_processed, threshold, 
-                                                           minimum_distance, end_frames)[1]
-            onset_times = self.get_onset_times_backtracked(onset_frames, backtrack)[0]
-            onset_times_backtracked = self.get_onset_times_backtracked(onset_frames, backtrack)[1]
-            
-            # plot the backtracked onset times
-            plt.figure(figsize=(15, 5))
-            librosa.display.waveplot(sample_processed, sr=self.SAMPLE_RATE, alpha=0.4)
-            plt.vlines(onset_times, ymin=-1, ymax=1, color='r', alpha=0.8)
-            plt.title(sample_name)
-            title = f'{sample_name} (max normalization)' if max_normalization \
-                else f'{sample_name} (min max normalization)'
-            plt.title(title)
-            
-            if debug:
-                print(f'{sample_name}: onset frames are {high_rmse_frames}')
-                print(f'{sample_name}: selected onset frames are {onset_frames}')
-                print(f'{sample_name}: onset times are {onset_times}')
-                print(f'{sample_name}: backtracked onset times are {onset_times_backtracked}\n')
+            except ValueError as err:
+                if self.debug: logging.error(f'{sample_name} had an error: "{err}". Skipped.', exc_info=True)
+                else: logging.error(f'{sample_name} had an error: "{err}". Skipped.')
+                continue
     
     def run_segmentation(self, sample_filenames, new_dir_path):
         ''''''
@@ -273,16 +291,21 @@ class CoughSegmentationTool:
                 # select max or min max normalization
                 sample_processed = self.get_max_normed_sample(sample) if self.max_normalization \
                     else self.get_min_max_normed_sample(sample)
+
                 sample_duration = self.get_sample_duration(sample_processed)
+                if self.debug: logging.info(f'{sample_name}: sample duration is {sample_duration}')
 
                 # skip samples smaller than 0.5 seconds
                 if sample_duration > 0.5:
                     
                     # calculate cough onsets and offsets
                     onset_frames = self.get_onset_frames_from_rmse(sample_processed, self.threshold, 
-                                                                   self.end_frames, self.minimum_distance)[1]
-                    onset_times = self.get_onset_times_backtracked(onset_frames, self.backtrack)[1]
+                                                                   self.minimum_distance, self.end_frames,
+                                                                   sample_name)
+                    onset_times = self.get_onset_times_backtracked(onset_frames, self.backtrack, sample_name)
+
                     onset_count = len(onset_times)
+                    if self.debug: logging.info(f'{sample_name}: onset count is {onset_count}')
                     
                     # segment individual coughs
                     for i in range(onset_count):
@@ -297,8 +320,9 @@ class CoughSegmentationTool:
                         self.process_and_export_cough(sample_processed, onset_times[i], offset_time, 
                                                       filename_split.format(sample_name, i))
                 else:
-                    print(f'Sample {sample_name} is too small. Skipped.')
+                    logging.error(f'Sample {sample_name} is too small. Skipped.')
                     continue
             except ValueError as err:
-                print(f'Sample {sample_name} had an error: "{err}". Skipped.')
+                if self.debug: logging.error(f'{sample_name} had an error: "{err}". Skipped.', exc_info=True)
+                else: logging.error(f'{sample_name} had an error: "{err}". Skipped.')
                 continue
