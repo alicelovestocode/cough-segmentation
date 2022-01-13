@@ -1,23 +1,24 @@
 
 # Copyright Alice Ashby 2022
 # Special thanks to Julia Meister
-# Version 0.0.1
+# Version 0.0.2
 # MIT license
 
 # TODO
-# - avoid any interpolation with sample rate
-# - max normalize rmse to 0,1 before onset detection
-# - avoid detection of onsets in last 2 frames
-# - implement rmse threshold diagnostics function
-# - implement onset offset diagnostics function
 # - add docstrings to class and class methods
-# - test on coughvid and coswara audio datasets
+# - test on coughvid, coswara, compare audio datasets
+# - fine-tune parameters RMSE, min_dist, backtrack
+# - use logger module for debugging?
 
 # import required libraries
 
 import librosa                                     # librosa music package
 import soundfile as sf                             # for audio exportation
 import numpy as np                                 # for handling large arrays
+
+import librosa.display                             # librosa plot functions
+import matplotlib.pyplot as plt                    # plotting with Matlab functionality
+
 from sklearn.preprocessing import MinMaxScaler     # for audio normalization
 from tqdm.notebook import tqdm                     # for progress bars
 
@@ -30,13 +31,12 @@ class CoughSegmentationTool:
     HOP_LENGTH = 256
     N_FFT = 2048
 
-    def __init__(self, sample_filenames, new_dir_path, threshold=0.5, 
-                minimum_distance=20, backtrack=0.01):
-        self.sample_filenames = sample_filenames
-        self.new_dir_path = new_dir_path
+    def __init__(self, threshold=0.5, minimum_distance=20, backtrack=0.01, end_frames=2):
+        ''''''
         self.threshold = threshold
         self.minimum_distance = minimum_distance
         self.backtrack = backtrack
+        self.end_frames = end_frames
 
     def get_max_normed_sample(self, sample):
         ''''''
@@ -63,19 +63,20 @@ class CoughSegmentationTool:
         
         return duration
 
-    def get_onset_frames_from_rmse(self, sample_processed, threshold, minimum_distance):
+    def get_onset_frames_from_rmse(self, sample_processed, threshold, minimum_distance,
+                                   end_frames):
         ''''''
 
-        # compute root mean squared energy over frames
+        # compute root mean squared energy (RMSE)
         rmse = librosa.feature.rms(sample_processed, frame_length=self.FRAME_LENGTH, 
-                                   hop_length=self.HOP_LENGTH, center=True)
-        rmse_array = rmse[0]
+                                   hop_length=self.HOP_LENGTH, center=True)[0]
         
-        # normalize the root mean squared energy
-        rmse_array_scaled = rmse_array/rmse_array.max()
+        # normalize the RMSE with min max normalization
+        scaler = MinMaxScaler(feature_range=(0, 1))
+        rmse_scaled = scaler.fit_transform(rmse.reshape(-1, 1)).flatten()
         
         high_rmse_frames = list()
-        for i, rmse_value in enumerate(rmse_array_scaled):
+        for i, rmse_value in enumerate(rmse_scaled):
             # compare RMSE values with threshold
             if rmse_value > threshold:
                 # if RMSE value exceeds threshold then
@@ -83,7 +84,7 @@ class CoughSegmentationTool:
                 high_rmse_frames.append(i)
         
         cough_frame_index = np.ones_like(high_rmse_frames, dtype=bool)
-        
+
         # we dont want a cough to be split into multiple very small chunks
         # so check if distance between the high RMSE frames is less than 
         # or equal to x frames / our minimum distance and only select first occurrence
@@ -99,9 +100,13 @@ class CoughSegmentationTool:
             # then ignore these frames
             if high_rmse_frames[i] - high_rmse_frames[j] <= minimum_distance:
                 cough_frame_index[i] = False
+
+        # do not allow onsets in the last 2 frames if there are >6 frames in total
+        if len(high_rmse_frames) > 5:
+            cough_frame_index[-end_frames:] = False
         
         # return array of onset frames with a minimum distance between them
-        return np.array(high_rmse_frames)[cough_frame_index]
+        return (high_rmse_frames, np.array(high_rmse_frames)[cough_frame_index])
 
     def get_onset_times_backtracked(self, onset_frames, backtrack):
         ''''''
@@ -116,7 +121,7 @@ class CoughSegmentationTool:
             time_backtracked = time - backtrack
             onset_times_backtracked.append(time_backtracked)
         
-        return onset_times_backtracked
+        return (onset_times, onset_times_backtracked)
 
     def process_and_export_cough(self, sample_processed, onset_time, offset_time, new_filename):
         ''''''
@@ -137,23 +142,125 @@ class CoughSegmentationTool:
         # export cough sample to audio file
         sf.write(new_filename, new_sample_scaled, self.SAMPLE_RATE)
 
-    def run_rmse_threshold_diagnostics(self):
+    def run_rmse_normalization_diagnostics(self, sample_filenames):
         ''''''
 
-        raise NotImplementedError
+        for filename in tqdm(sample_filenames, desc='Generating graphs'):
+            try:   
+                # [0] because sample is loaded as a tuple
+                sample = librosa.load(filename, self.SAMPLE_RATE, mono=True)[0]
 
-    def run_onset_offset_diagnostics(self):
+                # remove file path and filetype
+                sample_name_split = filename.split('/')[-1].split('.')[0]
+                sample_name = 'Sample ' + sample_name_split.split('-')[0]
+                
+                # compute short-time energy (STE)
+                energy = np.array([ 
+                    sum(abs(sample[i:i+self.FRAME_LENGTH]**2))
+                    for i in range(0, len(sample), self.HOP_LENGTH)
+                ])
+                
+                # compute root mean squared energy (RMSE)
+                rmse = librosa.feature.rms(sample, frame_length=self.FRAME_LENGTH, 
+                                           hop_length=self.HOP_LENGTH, center=True)[0]
+                
+                # normalize STE and RMSE with max normalization
+                energy_max_scaled = self.get_max_normed_sample(energy)
+                rmse_max_scaled = self.get_max_normed_sample(rmse)
+                
+                # normalize STE and RMSE with min max normalization
+                energy_min_max_scaled = self.get_min_max_normed_sample(energy)
+                rmse_min_max_scaled = self.get_min_max_normed_sample(rmse)
+
+                plt.figure(figsize=(15, 5))
+
+                # calculate onset frames from RMSE, then convert frames to onset times
+                # plot RMSE with max normalization across sample waveform
+                frames = range(len(rmse))
+                t = librosa.frames_to_time(frames, sr=self.SAMPLE_RATE, hop_length=self.HOP_LENGTH)
+                
+                plt.plot(t[:len(rmse)], rmse_max_scaled, color='b')
+
+                # calculate onset frames from STE, then convert frames to onset times
+                # plot STE with max normalization across sample waveform
+                frames = range(len(energy))
+                t = librosa.frames_to_time(frames, sr=self.SAMPLE_RATE, hop_length=self.HOP_LENGTH)
+                plt.plot(t[:len(energy)], energy_max_scaled, 'r--')
+
+                librosa.display.waveplot(sample, sr=self.SAMPLE_RATE, alpha=0.4)
+                plt.legend(('RMSE', 'STE'))
+                plt.title(f'{sample_name} (max normalization)')
+
+                plt.figure(figsize=(15, 5))
+
+                # calculate onset frames from RMSE, then convert frames to onset times
+                # plot RMSE with min max normalization across sample waveform
+                frames = range(len(rmse))
+                t = librosa.frames_to_time(frames, sr=self.SAMPLE_RATE, hop_length=self.HOP_LENGTH)
+                plt.plot(t[:len(rmse)], rmse_min_max_scaled, color='b')
+
+                # calculate onset frames from STE, then convert frames to onset times
+                # plot STE with min max normalization across sample waveform
+                frames = range(len(energy))
+                t = librosa.frames_to_time(frames, sr=self.SAMPLE_RATE, hop_length=self.HOP_LENGTH)
+                plt.plot(t[:len(energy)], energy_min_max_scaled, 'r--')
+
+                librosa.display.waveplot(sample, sr=self.SAMPLE_RATE, alpha=0.4)
+                plt.legend(('RMSE', 'STE'))
+                plt.title(f'{sample_name} (min max normalization)')
+            
+            except ValueError as err:
+                print(f'{sample_name} had an error: "{err}". Skipped.')
+                continue
+
+    def run_onset_offset_detection_diagnostics(self, sample_filenames, threshold=0.5, minimum_distance=20,
+                                     backtrack=0.01, end_frames=2, debug=False, max_normalization=False):
         ''''''
 
-        raise NotImplementedError
+        for filename in tqdm(sample_filenames, desc='Processing samples'):
+            
+            # remove file path and filetype
+            sample_name_split = filename.split('/')[-1].split('.')[0]
+            sample_name = 'Sample ' + sample_name_split.split('-')[0]
+
+            # load and process audio samples
+            # [0] because sample is loaded as a tuple
+            sample = librosa.load(filename, self.SAMPLE_RATE, mono=True)[0]
+
+            # select max or min max normalization
+            sample_processed = self.get_max_normed_sample(sample) if max_normalization \
+                else self.get_min_max_normed_sample(sample)
+
+            # calculate cough onsets and offsets
+            high_rmse_frames = self.get_onset_frames_from_rmse(sample_processed, threshold, 
+                                                               minimum_distance, end_frames)[0]
+            onset_frames = self.get_onset_frames_from_rmse(sample_processed, threshold, 
+                                                           minimum_distance, end_frames)[1]
+            onset_times = self.get_onset_times_backtracked(onset_frames, backtrack)[0]
+            onset_times_backtracked = self.get_onset_times_backtracked(onset_frames, backtrack)[1]
+            
+            # plot the backtracked onset times
+            plt.figure(figsize=(15, 5))
+            librosa.display.waveplot(sample_processed, sr=self.SAMPLE_RATE, alpha=0.4)
+            plt.vlines(onset_times, ymin=-1, ymax=1, color='r', alpha=0.8)
+            plt.title(sample_name)
+            title = f'{sample_name} (max normalization)' if max_normalization \
+                else f'{sample_name} (min max normalization)'
+            plt.title(title)
+            
+            if debug:
+                print(f'{sample_name}: onset frames are {high_rmse_frames}')
+                print(f'{sample_name}: selected onset frames are {onset_frames}')
+                print(f'{sample_name}: onset times are {onset_times}')
+                print(f'{sample_name}: backtracked onset times are {onset_times_backtracked}\n')
     
-    def run_segmentation(self):
+    def run_segmentation(self, sample_filenames, new_dir_path):
         ''''''
 
         # initialize new filename i.e. ID_X where X is the cough index
-        filename_split = self.new_dir_path + '/{}_{}.wav'
+        filename_split = new_dir_path + '/{}_{}.wav'
 
-        for filename in tqdm(self.sample_filenames, desc='Processing samples'):
+        for filename in tqdm(sample_filenames, desc='Processing samples'):
             try:
                 # remove file path and filetype
                 sample_name_split = filename.split('/')[-1].split('.')[0]
@@ -162,15 +269,18 @@ class CoughSegmentationTool:
                 # load and process audio samples
                 # [0] because sample is loaded as a tuple
                 sample = librosa.load(filename, self.SAMPLE_RATE, mono=True)[0]
-                sample_processed = self.get_min_max_normed_sample(sample)
+                # select max or min max normalization
+                sample_processed = self.get_max_normed_sample(sample) if self.max_normalization \
+                    else self.get_min_max_normed_sample(sample)
                 sample_duration = self.get_sample_duration(sample_processed)
 
                 # skip samples smaller than 0.5 seconds
                 if sample_duration > 0.5:
                     
+                    # calculate cough onsets and offsets
                     onset_frames = self.get_onset_frames_from_rmse(sample_processed, self.threshold, 
-                                                                   self.minimum_distance)
-                    onset_times = self.get_onset_times_backtracked(onset_frames, self.backtrack)
+                                                                   self.end_frames, self.minimum_distance)[1]
+                    onset_times = self.get_onset_times_backtracked(onset_frames, self.backtrack)[1]
                     onset_count = len(onset_times)
                     
                     # segment individual coughs
