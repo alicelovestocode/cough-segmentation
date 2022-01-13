@@ -7,7 +7,7 @@
 # TODO
 # - add docstrings to class and class methods
 # - test on coughvid, coswara, compare audio datasets
-# - fine-tune parameters RMSE, min_dist, backtrack
+# - fine-tune parameters RMSE, end_frames
 # - use logger module for debugging?
 
 # import required libraries
@@ -29,14 +29,15 @@ class CoughSegmentationTool:
     SAMPLE_RATE = 16000
     FRAME_LENGTH = 512
     HOP_LENGTH = 256
-    N_FFT = 2048
 
-    def __init__(self, threshold=0.5, minimum_distance=20, backtrack=0.01, end_frames=2):
+    def __init__(self, threshold=0.5, minimum_distance=20, backtrack=0.01, 
+                 end_frames=2, max_normalization=False):
         ''''''
         self.threshold = threshold
         self.minimum_distance = minimum_distance
         self.backtrack = backtrack
         self.end_frames = end_frames
+        self.max_normalization = max_normalization
 
     def get_max_normed_sample(self, sample):
         ''''''
