@@ -1,13 +1,12 @@
 
 # Copyright Alice Ashby 2022
 # Special thanks to Julia Meister
-# Version 0.0.3
+# Version 1.0.0
 # MIT license
 
 # TODO
 # - add docstrings to class and class methods
 # - test on coughvid, coswara, compare audio datasets
-# - fine-tune parameters RMSE, end_frames
 
 # import required libraries
 
@@ -29,13 +28,16 @@ class CoughSegmentationTool:
     SAMPLE_RATE = 16000
     FRAME_LENGTH = 512
     HOP_LENGTH = 256
+    TOP_DB=10
 
-    def __init__(self, threshold=0.5, minimum_distance=20, backtrack=0.01, 
-                 end_frames=2, max_normalization=False, debug=False):
+    def __init__(self, threshold=0.4, minimum_distance=20, backtrack=0.01, 
+                 trim_frames=False, end_frames=2, max_normalization=False, 
+                 debug=False):
         ''''''
         self.threshold = threshold
         self.minimum_distance = minimum_distance
         self.backtrack = backtrack
+        self.trim_frames = trim_frames
         self.end_frames = end_frames
         self.max_normalization = max_normalization
         self.debug = debug
@@ -71,7 +73,7 @@ class CoughSegmentationTool:
         return duration
 
     def get_onset_frames_from_rmse(self, sample_processed, threshold, minimum_distance,
-                                   end_frames, sample_name):
+                                   trim_frames, end_frames, sample_name):
         ''''''
 
         # compute root mean squared energy (RMSE)
@@ -108,9 +110,10 @@ class CoughSegmentationTool:
             if high_rmse_frames[i] - high_rmse_frames[j] <= minimum_distance:
                 cough_frame_index[i] = False
 
-        # do not allow onsets in the last 2 frames if there are 5+ frames in total
-        if len(high_rmse_frames) > 5:
-            cough_frame_index[-end_frames:] = False
+        if trim_frames:
+            # do not allow onsets in the last x frames if there are 5+ frames in total
+            if len(high_rmse_frames) > 5:
+                cough_frame_index[-end_frames:] = False
 
         # array of onset frames with a minimum distance between them
         onset_frames = np.array(high_rmse_frames)[cough_frame_index]
@@ -152,8 +155,9 @@ class CoughSegmentationTool:
         new_sample = sample_processed[onset_sample:offset_sample]
          
         # trim leading and trailing silence under 10dB
-        new_sample_trim = librosa.effects.trim(new_sample, top_db=10, frame_length=self.FRAME_LENGTH, 
-                                                hop_length=self.HOP_LENGTH)[0]
+        new_sample_trim = librosa.effects.trim(new_sample, top_db=self.TOP_DB, 
+                                               frame_length=self.FRAME_LENGTH, 
+                                               hop_length=self.HOP_LENGTH)[0]
         new_sample_duration = self.get_sample_duration(new_sample_trim)
         if self.debug: logging.info(f'{sample_name}: sample duration is {new_sample_duration}')
 
@@ -235,8 +239,9 @@ class CoughSegmentationTool:
                 else: logging.error(f'{sample_name} had an error: "{err}". Skipped.')
                 continue
 
-    def run_onset_offset_detection_diagnostics(self, sample_filenames, threshold=0.5, minimum_distance=20,
-                                               backtrack=0.01, end_frames=2, max_normalization=False):
+    def run_onset_offset_detection_diagnostics(self, sample_filenames, threshold=0.4, minimum_distance=20,
+                                               backtrack=0.01, trim_frames=False, end_frames=2, 
+                                               max_normalization=False):
         ''''''
 
         for filename in tqdm(sample_filenames, desc='Processing samples'):
@@ -255,8 +260,8 @@ class CoughSegmentationTool:
                 
                 # calculate cough onsets and offsets
                 onset_frames = self.get_onset_frames_from_rmse(sample_processed, threshold, 
-                                                               minimum_distance, end_frames,
-                                                               sample_name)
+                                                               minimum_distance, trim_frames,
+                                                               end_frames, sample_name)
                 onset_times = self.get_onset_times_backtracked(onset_frames, backtrack, sample_name)
                 
                 # plot the backtracked onset times
@@ -300,8 +305,8 @@ class CoughSegmentationTool:
                     
                     # calculate cough onsets and offsets
                     onset_frames = self.get_onset_frames_from_rmse(sample_processed, self.threshold, 
-                                                                   self.minimum_distance, self.end_frames,
-                                                                   sample_name)
+                                                                   self.minimum_distance, self.trim_frames,
+                                                                   self.end_frames, sample_name)
                     onset_times = self.get_onset_times_backtracked(onset_frames, self.backtrack, sample_name)
 
                     onset_count = len(onset_times)
