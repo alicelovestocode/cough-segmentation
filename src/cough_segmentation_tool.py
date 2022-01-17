@@ -323,7 +323,7 @@ class CoughSegmentationTool:
 
                         # trim and normalize each individual cough, then export to audio file
                         self.process_and_export_cough(sample_processed, onset_times[i], offset_time, 
-                                                      filename_split.format(sample_name, i))
+                                                      filename_split.format(sample_name, i), sample_name)
                 else:
                     logging.error(f'Sample {sample_name} is too small. Skipped.')
                     continue
