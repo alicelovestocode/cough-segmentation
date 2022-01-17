@@ -30,7 +30,7 @@ class CoughSegmentationTool:
     HOP_LENGTH = 256
     TOP_DB=10
 
-    def __init__(self, threshold=0.4, minimum_distance=20, backtrack=0.01, 
+    def __init__(self, threshold=0.5, minimum_distance=20, backtrack=0.01, 
                  trim_frames=False, end_frames=2, max_normalization=False, 
                  debug=False):
         ''''''
@@ -239,7 +239,7 @@ class CoughSegmentationTool:
                 else: logging.error(f'{sample_name} had an error: "{err}". Skipped.')
                 continue
 
-    def run_onset_offset_detection_diagnostics(self, sample_filenames, threshold=0.4, minimum_distance=20,
+    def run_onset_offset_detection_diagnostics(self, sample_filenames, threshold=0.5, minimum_distance=20,
                                                backtrack=0.01, trim_frames=False, end_frames=2, 
                                                max_normalization=False):
         ''''''
