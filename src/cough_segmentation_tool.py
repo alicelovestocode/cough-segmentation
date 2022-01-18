@@ -1,7 +1,7 @@
 
 # Copyright Alice Ashby 2022
 # Special thanks to Julia Meister
-# Version 1.0.0
+# Version 1.0.2
 # MIT license
 
 # TODO
