@@ -6,7 +6,8 @@
 
 # TODO
 # - add docstrings to class and class methods
-# - test on coughvid, coswara, compare audio datasets
+# - test on coughvid, coswara, india clinical audio datasets
+# - use pathlib to process file paths
 
 # import required libraries
 
@@ -153,16 +154,26 @@ class CoughSegmentationTool:
         
         # create sample from onset and offset
         new_sample = sample_processed[onset_sample:offset_sample]
+
+        if self.debug: 
+            logging.info(f'{sample_name}: sample processed is {sample_processed}')
+            logging.info(f'{sample_name}: onset sample is {onset_sample}')
+            logging.info(f'{sample_name}: offset sample is {offset_sample}')
+            logging.info(f'{sample_name}: new sample is {new_sample}')
          
         # trim leading and trailing silence under 10dB
         new_sample_trim = librosa.effects.trim(new_sample, top_db=self.TOP_DB, 
                                                frame_length=self.FRAME_LENGTH, 
                                                hop_length=self.HOP_LENGTH)[0]
         new_sample_duration = self.get_sample_duration(new_sample_trim)
-        if self.debug: logging.info(f'{sample_name}: sample duration is {new_sample_duration}')
 
         # normalize the sample with min max normalization
         new_sample_scaled = self.get_min_max_normed_sample(new_sample_trim)
+
+        if self.debug: 
+            logging.info(f'{sample_name}: new sample trim is {new_sample_trim}')
+            logging.info(f'{sample_name}: sample duration is {new_sample_duration}')
+            logging.info(f'{sample_name}: new sample scaled is {new_sample_scaled}')
         
         # export cough sample to audio file
         sf.write(new_filename, new_sample_scaled, self.SAMPLE_RATE)
@@ -251,7 +262,7 @@ class CoughSegmentationTool:
                 sample_name = 'Sample ' + sample_name_split.split('-')[0]
                 
                 # load and process audio samples
-                # # [0] because sample is loaded as a tuple
+                # [0] because sample is loaded as a tuple
                 sample = librosa.load(filename, self.SAMPLE_RATE, mono=True)[0]
                 
                 # select max or min max normalization
