@@ -1,7 +1,7 @@
 
 # Copyright Alice Ashby 2022
 # Special thanks to Julia Meister
-# Version 1.0.2
+# Version 1.0.3
 # MIT license
 
 # TODO
@@ -26,7 +26,7 @@ class CoughSegmentationTool:
     ''''''
 
     # declare constants
-    SAMPLE_RATE = 16000
+    SAMPLE_RATE = 22050
     FRAME_LENGTH = 512
     HOP_LENGTH = 256
     TOP_DB=10
@@ -52,7 +52,7 @@ class CoughSegmentationTool:
         ''''''
         
         # we want to normalize the samples not the features
-        sample_scaled = sample/sample.max()
+        sample_scaled = sample / sample.max()
 
         return sample_scaled
 
@@ -192,7 +192,7 @@ class CoughSegmentationTool:
                 
                 # compute short-time energy (STE)
                 energy = np.array([ 
-                    sum(abs(sample[i:i+self.FRAME_LENGTH]**2))
+                    sum(abs(sample[i:i + self.FRAME_LENGTH] ** 2))
                     for i in range(0, len(sample), self.HOP_LENGTH)
                 ])
                 
@@ -223,7 +223,7 @@ class CoughSegmentationTool:
                 t = librosa.frames_to_time(frames, sr=self.SAMPLE_RATE, hop_length=self.HOP_LENGTH)
                 plt.plot(t[:len(energy)], energy_max_scaled, 'r--')
 
-                librosa.display.waveplot(sample, sr=self.SAMPLE_RATE, alpha=0.4)
+                librosa.display.waveshow(sample, sr=self.SAMPLE_RATE, alpha=0.4)
                 plt.legend(('RMSE', 'STE'))
                 plt.title(f'{sample_name} (max normalization)')
 
@@ -241,7 +241,7 @@ class CoughSegmentationTool:
                 t = librosa.frames_to_time(frames, sr=self.SAMPLE_RATE, hop_length=self.HOP_LENGTH)
                 plt.plot(t[:len(energy)], energy_min_max_scaled, 'r--')
 
-                librosa.display.waveplot(sample, sr=self.SAMPLE_RATE, alpha=0.4)
+                librosa.display.waveshow(sample, sr=self.SAMPLE_RATE, alpha=0.4)
                 plt.legend(('RMSE', 'STE'))
                 plt.title(f'{sample_name} (min max normalization)')
             
@@ -277,7 +277,7 @@ class CoughSegmentationTool:
                 
                 # plot the backtracked onset times
                 plt.figure(figsize=(15, 5))
-                librosa.display.waveplot(sample_processed, sr=self.SAMPLE_RATE, alpha=0.4)
+                librosa.display.waveshow(sample_processed, sr=self.SAMPLE_RATE, alpha=0.4)
                 plt.vlines(onset_times, ymin=-1, ymax=1, color='r', alpha=0.8)
                 plt.title(sample_name)
                 title = f'{sample_name} (max normalization)' if max_normalization \
