@@ -1,5 +1,5 @@
-# Cough Segmentation Tool
-A novel cough audio pre-processing tool for medical researchers.
+# Cough Segmentation Framework
+A novel cough audio pre-processing and segmentation algorithm for COVID-19 detection.
 
 ## Setting up the Environment
 > Note: You will need to have **Python 3.8** (or higher) and **poetry** installed.
